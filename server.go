@@ -8,8 +8,9 @@ import (
 	"fmt"
 	"net"
 	"os"
-
+	"strings"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/term"
 )
 
 func main() {
@@ -55,7 +56,7 @@ func startServer() {
 }
 
 func handleConnection(conn net.Conn, config *ssh.ServerConfig) {
-	sshConn, _, _, err := ssh.NewServerConn(conn, config)
+	sshConn, chans, req, err := ssh.NewServerConn(conn, config)
 
 	if err != nil {
 		fmt.Println("SSH Handshake failed:", err)
@@ -63,5 +64,59 @@ func handleConnection(conn net.Conn, config *ssh.ServerConfig) {
 	}
 
 	fmt.Printf("New SSH connection from %s (%s)\n", sshConn.RemoteAddr(), sshConn.ClientVersion())
+
+	go ssh.DiscardRequests(req)
+
+	for newChannel := range chans {
+		if newChannel.ChannelType() != "session"{
+			newChannel.Reject(ssh.UnknownChannelType ,"unknown channel type")
+			continue
+		}
+
+		channel, request, err := newChannel.Accept()
+		if err != nil {
+			fmt.Println("Failed to accept the channel:", err.Error())
+			return
+		}
+
+		go HandleSession(channel, request)
+	}
+	
 	sshConn.Close()
+}
+
+func HandleSession(chanl ssh.Channel, requests <-chan *ssh.Request) {
+	go func() {
+		for req := range requests{
+			if req.Type == "pty-req" || req.Type == "shell" {
+				req.Reply(true, nil)
+			} else {
+				req.Reply(false, nil)
+			}
+		}
+	}()
+
+	terminal := term.NewTerminal(chanl, "> ")
+		
+		_, err := terminal.Write([]byte("Welcome to nite-chat!\r\n"))
+		if err != nil {
+			fmt.Println("Failed to write to user:", err.Error())
+		}
+	
+		for {
+			line, err := terminal.ReadLine()
+			if err != nil {
+				fmt.Println("User disconnected or error:", err.Error())
+				return
+			}
+	
+			line = strings.TrimSpace(line)
+			
+			if line == "/leave" {
+				chanl.Close()
+				return
+			}
+	
+			terminal.Write([]byte(fmt.Sprintf("You said: %s\r\n", line)))
+		}
 }
