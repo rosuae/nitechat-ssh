@@ -9,15 +9,45 @@ import (
 	"net"
 	"os"
 	"strings"
+
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
 )
+
+type Client struct {
+	ui *term.Terminal
+}
+
+type Hub struct {
+	clients map[*Client]bool
+	broadcast chan []byte
+	register chan *Client
+	unregister chan *Client
+}
+
+func (h Hub) Run() {
+	for {
+		select {
+			case c := <-h.register:
+				h.clients[c] = true
+			case c := <-h.unregister:
+				delete(h.clients, c)
+			case message := <-h.broadcast:
+				for client := range h.clients {
+					client.ui.Write([]byte(string(message[:]) + "\r\n"))
+				}
+		}
+	}
+}
 
 func main() {
 	startServer()
 }
 
 func startServer() {
+	mainHub := Hub{}
+	go mainHub.Run()
+	
 	listener, err := net.Listen("tcp", ":2222")
 	if err != nil {
 		fmt.Println(err.Error())
@@ -51,43 +81,52 @@ func startServer() {
 			fmt.Println("Error accepting connection", err.Error())
 			continue
 		}
-		go handleConnection(conn, config)
+		go handleConnection(conn, &mainHub, config)
 	}
 }
 
-func handleConnection(conn net.Conn, config *ssh.ServerConfig) {
+func handleConnection(conn net.Conn, hub *Hub, config *ssh.ServerConfig) {
 	sshConn, chans, req, err := ssh.NewServerConn(conn, config)
-
+	
 	if err != nil {
 		fmt.Println("SSH Handshake failed:", err)
 		return
 	}
 
+	client := Client{}
+	hub.register <- &client
+
 	fmt.Printf("New SSH connection from %s (%s)\n", sshConn.RemoteAddr(), sshConn.ClientVersion())
 
 	go ssh.DiscardRequests(req)
+	defer func(sshConn *ssh.ServerConn) {
+		err := sshConn.Close()
+		if err != nil {
+			fmt.Println(err.Error())
+		}
+		hub.unregister <- &client
+	}(sshConn)
 
 	for newChannel := range chans {
-		if newChannel.ChannelType() != "session"{
-			newChannel.Reject(ssh.UnknownChannelType ,"unknown channel type")
+		if newChannel.ChannelType() != "session" {
+			newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
 			continue
 		}
 
-		channel, request, err := newChannel.Accept()
+		channel, request, err := newChannel.Accept()		
+		
 		if err != nil {
 			fmt.Println("Failed to accept the channel:", err.Error())
 			return
 		}
 
-		go HandleSession(channel, request)
+		go HandleSession(channel, request, hub, &client)
 	}
-	
-	sshConn.Close()
 }
 
-func HandleSession(chanl ssh.Channel, requests <-chan *ssh.Request) {
+func HandleSession(chanl ssh.Channel, requests <-chan *ssh.Request, hub *Hub, client *Client) {
 	go func() {
-		for req := range requests{
+		for req := range requests {
 			if req.Type == "pty-req" || req.Type == "shell" {
 				req.Reply(true, nil)
 			} else {
@@ -96,27 +135,27 @@ func HandleSession(chanl ssh.Channel, requests <-chan *ssh.Request) {
 		}
 	}()
 
-	terminal := term.NewTerminal(chanl, "> ")
-		
-		_, err := terminal.Write([]byte("Welcome to nite-chat!\r\n"))
+	client.ui = term.NewTerminal(chanl, "> ")
+
+	_, err := client.ui.Write([]byte("Welcome to nite-chat!\r\n"))
+	if err != nil {
+		fmt.Println("Failed to write to user:", err.Error())
+	}
+
+	for {
+		line, err := client.ui.ReadLine()
 		if err != nil {
-			fmt.Println("Failed to write to user:", err.Error())
+			fmt.Println("User disconnected or error:", err.Error())
+			return
 		}
-	
-		for {
-			line, err := terminal.ReadLine()
-			if err != nil {
-				fmt.Println("User disconnected or error:", err.Error())
-				return
-			}
-	
-			line = strings.TrimSpace(line)
-			
-			if line == "/leave" {
-				chanl.Close()
-				return
-			}
-	
-			terminal.Write([]byte(fmt.Sprintf("You said: %s\r\n", line)))
+
+		line = strings.TrimSpace(line)
+
+		if line == "/leave" {
+			chanl.Close()
+			return
 		}
+		
+		hub.broadcast <- []byte(line + "\r\n")
+	}
 }
