@@ -25,7 +25,16 @@ type Hub struct {
 	unregister chan *Client
 }
 
-func (h Hub) Run() {
+func NewHub() *Hub {
+	return &Hub{
+		clients: make(map[*Client]bool),
+		broadcast: make(chan []byte),
+		register: make(chan *Client),
+		unregister: make(chan *Client),
+	}
+}
+
+func (h *Hub) Run() {
 	for {
 		select {
 			case c := <-h.register:
@@ -45,7 +54,7 @@ func main() {
 }
 
 func startServer() {
-	mainHub := Hub{}
+	mainHub := NewHub()
 	go mainHub.Run()
 	
 	listener, err := net.Listen("tcp", ":2222")
@@ -81,7 +90,7 @@ func startServer() {
 			fmt.Println("Error accepting connection", err.Error())
 			continue
 		}
-		go handleConnection(conn, &mainHub, config)
+		go handleConnection(conn, mainHub, config)
 	}
 }
 
@@ -94,7 +103,6 @@ func handleConnection(conn net.Conn, hub *Hub, config *ssh.ServerConfig) {
 	}
 
 	client := Client{}
-	hub.register <- &client
 
 	fmt.Printf("New SSH connection from %s (%s)\n", sshConn.RemoteAddr(), sshConn.ClientVersion())
 
@@ -104,7 +112,6 @@ func handleConnection(conn net.Conn, hub *Hub, config *ssh.ServerConfig) {
 		if err != nil {
 			fmt.Println(err.Error())
 		}
-		hub.unregister <- &client
 	}(sshConn)
 
 	for newChannel := range chans {
@@ -125,6 +132,11 @@ func handleConnection(conn net.Conn, hub *Hub, config *ssh.ServerConfig) {
 }
 
 func HandleSession(chanl ssh.Channel, requests <-chan *ssh.Request, hub *Hub, client *Client) {
+	defer func() {
+		chanl.Close()
+		hub.unregister <- client
+	}()
+	
 	go func() {
 		for req := range requests {
 			if req.Type == "pty-req" || req.Type == "shell" {
@@ -134,8 +146,9 @@ func HandleSession(chanl ssh.Channel, requests <-chan *ssh.Request, hub *Hub, cl
 			}
 		}
 	}()
-
+	
 	client.ui = term.NewTerminal(chanl, "> ")
+	hub.register <- client
 
 	_, err := client.ui.Write([]byte("Welcome to nite-chat!\r\n"))
 	if err != nil {
