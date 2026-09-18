@@ -16,6 +16,7 @@ import (
 
 type Client struct {
 	ui *term.Terminal
+	username string
 }
 
 type Hub struct {
@@ -38,7 +39,9 @@ func (h *Hub) Run() {
 	for {
 		select {
 			case c := <-h.register:
+				nick := c.username
 				h.clients[c] = true
+				h.broadcast <- []byte(nick + "HAS DISCONNECTED" + "\r\n")
 			case c := <-h.unregister:
 				delete(h.clients, c)
 			case message := <-h.broadcast:
@@ -102,7 +105,7 @@ func handleConnection(conn net.Conn, hub *Hub, config *ssh.ServerConfig) {
 		return
 	}
 
-	client := Client{}
+	client := Client{nil, sshConn.User()}
 
 	fmt.Printf("New SSH connection from %s (%s)\n", sshConn.RemoteAddr(), sshConn.ClientVersion())
 
