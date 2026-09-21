@@ -3,34 +3,47 @@
 package main
 
 import (
-	"crypto/ed25519"
-	"crypto/rand"
 	"fmt"
 	"net"
 	"os"
 	"strings"
+
+	"crypto/ed25519"
+	"crypto/rand"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
 )
 
 type Client struct {
-	ui *term.Terminal
+	ui       *term.Terminal
+	id       string
 	username string
+	receive  chan []byte
+}
+
+func (c *Client) Listen() {
+	for message := range c.receive {
+		if _, err := c.ui.Write(message); err != nil {
+			fmt.Println("Failed to write to user:", err.Error())
+			return
+		}
+	}
 }
 
 type Hub struct {
-	clients map[*Client]bool
-	broadcast chan []byte
-	register chan *Client
+	id         string
+	clients    map[*Client]bool
+	broadcast  chan []byte
+	register   chan *Client
 	unregister chan *Client
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		clients: make(map[*Client]bool),
-		broadcast: make(chan []byte),
-		register: make(chan *Client),
+		clients:    make(map[*Client]bool),
+		broadcast:  make(chan []byte),
+		register:   make(chan *Client),
 		unregister: make(chan *Client),
 	}
 }
@@ -38,18 +51,33 @@ func NewHub() *Hub {
 func (h *Hub) Run() {
 	for {
 		select {
-			case c := <-h.register:
-				nick := c.username
-				h.clients[c] = true
-				h.broadcast <- []byte(nick + "HAS DISCONNECTED" + "\r\n")
-			case c := <-h.unregister:
+		case c := <-h.register:
+			h.clients[c] = true
+		case c := <-h.unregister:
+			if _, ok := h.clients[c]; ok {
 				delete(h.clients, c)
-			case message := <-h.broadcast:
-				for client := range h.clients {
-					client.ui.Write([]byte(string(message[:]) + "\r\n"))
-				}
+				close(c.receive)
+			}
+		case message := <-h.broadcast:
+			for client := range h.clients {
+				client.receive <- message
+			}
 		}
 	}
+}
+
+func (h *Hub) registerClient(c *Client) {
+	h.register <- c
+	fmt.Println("Register client:", c.username, ", into hub: ", h.id)
+}
+
+func (h *Hub) unregisterClient(c *Client) {
+	h.unregister <- c
+	fmt.Println("Unregister client:", c.username, ", from hub: ", h.id)
+}
+
+func (h *Hub) sendMessage(message []byte) {
+	h.broadcast <- message
 }
 
 func main() {
@@ -105,8 +133,6 @@ func handleConnection(conn net.Conn, hub *Hub, config *ssh.ServerConfig) {
 		return
 	}
 
-	client := Client{nil, sshConn.User()}
-
 	fmt.Printf("New SSH connection from %s (%s)\n", sshConn.RemoteAddr(), sshConn.ClientVersion())
 
 	go ssh.DiscardRequests(req)
@@ -123,21 +149,30 @@ func handleConnection(conn net.Conn, hub *Hub, config *ssh.ServerConfig) {
 			continue
 		}
 
-		channel, request, err := newChannel.Accept()		
-		
+		channel, request, err := newChannel.Accept()
+
 		if err != nil {
 			fmt.Println("Failed to accept the channel:", err.Error())
 			return
 		}
 
-		go HandleSession(channel, request, hub, &client)
+		client := &Client{
+			username: sshConn.User(),
+			receive: make(chan []byte, 16),
+		}
+		go HandleSession(channel, request, hub, client)
 	}
 }
 
 func HandleSession(chanl ssh.Channel, requests <-chan *ssh.Request, hub *Hub, client *Client) {
+	registered := false
 	defer func() {
-		chanl.Close()
-		hub.unregister <- client
+		if registered {
+			hub.unregisterClient(client)
+		}
+		if err := chanl.Close(); err != nil {
+			fmt.Println("Failed to close user channel:", err.Error())
+		}
 	}()
 	
 	go func() {
@@ -151,12 +186,16 @@ func HandleSession(chanl ssh.Channel, requests <-chan *ssh.Request, hub *Hub, cl
 	}()
 	
 	client.ui = term.NewTerminal(chanl, "> ")
-	hub.register <- client
 
 	_, err := client.ui.Write([]byte("Welcome to nite-chat!\r\n"))
 	if err != nil {
 		fmt.Println("Failed to write to user:", err.Error())
+		return
 	}
+
+	hub.registerClient(client)
+	registered = true
+	go client.Listen()
 
 	for {
 		line, err := client.ui.ReadLine()
@@ -171,7 +210,7 @@ func HandleSession(chanl ssh.Channel, requests <-chan *ssh.Request, hub *Hub, cl
 			chanl.Close()
 			return
 		}
-		
-		hub.broadcast <- []byte(line + "\r\n")
+
+		hub.sendMessage([]byte(line + "\r\n"))
 	}
 }
