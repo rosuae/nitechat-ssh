@@ -87,7 +87,7 @@ func main() {
 func startServer() {
 	mainHub := NewHub()
 	go mainHub.Run()
-	
+
 	listener, err := net.Listen("tcp", ":2222")
 	if err != nil {
 		fmt.Println(err.Error())
@@ -98,10 +98,23 @@ func startServer() {
 		NoClientAuth: true,
 	}
 
-	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	privateKeyBytes, err := os.ReadFile(".ssh/host_ed25519")
 	if err != nil {
-		fmt.Println("failed to generate key:", err.Error())
-		os.Exit(1)
+		_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			fmt.Println("failed to generate key:", err.Error())
+			os.Exit(1)
+		}
+		if err = os.WriteFile(".ssh/host_ed25519", privateKey, 0600); err != nil {
+			fmt.Println("failed to write ed25519 key:", err.Error())
+			os.Exit(1)
+		}
+		privateKeyBytes = privateKey
+	}
+
+	privateKey, err := ssh.ParseRawPrivateKey(privateKeyBytes)
+	if err != nil {
+		fmt.Println("failed to parse private key:", err.Error())
 	}
 
 	signer, err := ssh.NewSignerFromKey(privateKey)
@@ -112,7 +125,12 @@ func startServer() {
 
 	config.AddHostKey(signer)
 
-	defer listener.Close()
+	defer func(listener net.Listener) {
+		err := listener.Close()
+		if err != nil {
+			fmt.Println("failed to close listener:", err.Error())
+		}
+	}(listener)
 	fmt.Println("Listening on " + listener.Addr().String())
 
 	for {
@@ -127,7 +145,7 @@ func startServer() {
 
 func handleConnection(conn net.Conn, hub *Hub, config *ssh.ServerConfig) {
 	sshConn, chans, req, err := ssh.NewServerConn(conn, config)
-	
+
 	if err != nil {
 		fmt.Println("SSH Handshake failed:", err)
 		return
@@ -158,7 +176,7 @@ func handleConnection(conn net.Conn, hub *Hub, config *ssh.ServerConfig) {
 
 		client := &Client{
 			username: sshConn.User(),
-			receive: make(chan []byte, 16),
+			receive:  make(chan []byte, 16),
 		}
 		go HandleSession(channel, request, hub, client)
 	}
@@ -174,7 +192,7 @@ func HandleSession(chanl ssh.Channel, requests <-chan *ssh.Request, hub *Hub, cl
 			fmt.Println("Failed to close user channel:", err.Error())
 		}
 	}()
-	
+
 	go func() {
 		for req := range requests {
 			if req.Type == "pty-req" || req.Type == "shell" {
@@ -184,7 +202,7 @@ func HandleSession(chanl ssh.Channel, requests <-chan *ssh.Request, hub *Hub, cl
 			}
 		}
 	}()
-	
+
 	client.ui = term.NewTerminal(chanl, "> ")
 
 	_, err := client.ui.Write([]byte("Welcome to nite-chat!\r\n"))
