@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"crypto/ed25519"
@@ -98,25 +99,38 @@ func startServer() {
 		NoClientAuth: true,
 	}
 
-	privateKeyBytes, err := os.ReadFile(".ssh/host_ed25519")
+	hostKeyPath := filepath.Join(".ssh", "host_ed25519")
+	privateKeyBytes, err := os.ReadFile(hostKeyPath)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			fmt.Println("failed to read host key:", err.Error())
+			os.Exit(1)
+		}
+
+		if err := os.MkdirAll(filepath.Dir(hostKeyPath), 0700); err != nil {
+			fmt.Println("failed to create host key directory:", err.Error())
+			os.Exit(1)
+		}
+
 		_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			fmt.Println("failed to generate key:", err.Error())
 			os.Exit(1)
 		}
-		if err = os.WriteFile(".ssh/host_ed25519", privateKey, 0600); err != nil {
+
+		privateKeyBytes = privateKey
+		if err = os.WriteFile(hostKeyPath, privateKeyBytes, 0600); err != nil {
 			fmt.Println("failed to write ed25519 key:", err.Error())
 			os.Exit(1)
 		}
-		privateKeyBytes = privateKey
 	}
 
-	privateKey, err := ssh.ParseRawPrivateKey(privateKeyBytes)
-	if err != nil {
-		fmt.Println("failed to parse private key:", err.Error())
+	if len(privateKeyBytes) != ed25519.PrivateKeySize {
+		fmt.Println("failed to load host key: invalid Ed25519 private key size")
+		os.Exit(1)
 	}
 
+	privateKey := ed25519.PrivateKey(privateKeyBytes)
 	signer, err := ssh.NewSignerFromKey(privateKey)
 	if err != nil {
 		fmt.Println("failed to create signer", err.Error())
