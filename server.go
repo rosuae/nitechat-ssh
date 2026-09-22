@@ -1,5 +1,3 @@
-// for connecting: ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null localhost -p 2222
-
 package main
 
 import (
@@ -8,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"crypto/ed25519"
 	"crypto/rand"
@@ -17,10 +16,13 @@ import (
 )
 
 type Client struct {
-	ui       *term.Terminal
-	id       string
-	username string
-	receive  chan []byte
+	hub       *Hub
+	ui        *term.Terminal
+	channel   ssh.Channel
+	id        string
+	username  string
+	receive   chan []byte
+	closeOnce sync.Once
 }
 
 func (c *Client) Listen() {
@@ -29,6 +31,68 @@ func (c *Client) Listen() {
 			fmt.Println("Failed to write to user:", err.Error())
 			return
 		}
+	}
+}
+
+func (c *Client) Send(message []byte) bool {
+	select {
+	case c.receive <- message:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *Client) CloseConn() {
+	c.closeOnce.Do(func() {
+		if err := c.channel.Close(); err != nil {
+			fmt.Println("Failed to close client channel:", err.Error())
+		}
+	})
+}
+
+func (c *Client) HandleSession(requests <-chan *ssh.Request, hub *Hub) {
+	registered := false
+	defer func() {
+		if registered {
+			hub.unregisterClient(c)
+		}
+		if err := c.channel.Close(); err != nil {
+			fmt.Println("Failed to close user channel:", err.Error())
+		}
+	}()
+
+	go func() {
+		for req := range requests {
+			if req.Type == "pty-req" || req.Type == "shell" {
+				req.Reply(true, nil)
+			} else {
+				req.Reply(false, nil)
+			}
+		}
+	}()
+
+	_, err := c.ui.Write([]byte("Welcome to nite-chat!\r\n"))
+	if err != nil {
+		fmt.Println("Failed to write to user:", err.Error())
+		return
+	}
+
+	c.hub.registerClient(c)
+	registered = true
+	go c.Listen()
+
+	for {
+		line, err := c.ui.ReadLine()
+		if err != nil {
+			fmt.Println("User disconnected or error:", err.Error())
+			return
+		}
+		line = strings.TrimSpace(line)
+		if line == "/leave" {
+			return
+		}
+		hub.sendMessage([]byte(line + "\r\n"))
 	}
 }
 
@@ -61,9 +125,24 @@ func (h *Hub) Run() {
 			}
 		case message := <-h.broadcast:
 			for client := range h.clients {
-				client.receive <- message
+				if !client.Send(message) {
+					fmt.Println("Failed to write to user:", client.username)
+					delete(h.clients, client)
+					close(client.receive)
+					client.CloseConn()
+				}
 			}
 		}
+	}
+}
+
+func (h *Hub) newClient(username string, sshChanl ssh.Channel) *Client {
+	return &Client{
+		hub:      h,
+		ui:       term.NewTerminal(sshChanl, "> "),
+		channel:  sshChanl,
+		username: username,
+		receive:  make(chan []byte),
 	}
 }
 
@@ -79,6 +158,39 @@ func (h *Hub) unregisterClient(c *Client) {
 
 func (h *Hub) sendMessage(message []byte) {
 	h.broadcast <- message
+}
+
+func (h *Hub) handleConnection(conn net.Conn, config *ssh.ServerConfig) {
+	sshConn, chans, req, err := ssh.NewServerConn(conn, config)
+
+	if err != nil {
+		fmt.Println("SSH Handshake failed:", err)
+		return
+	}
+	fmt.Printf("New SSH connection from %s (%s)\n", sshConn.RemoteAddr(), sshConn.ClientVersion())
+
+	go ssh.DiscardRequests(req)
+	defer func(sshConn *ssh.ServerConn) {
+		if err := sshConn.Close(); err != nil {
+			fmt.Println(err.Error())
+		}
+	}(sshConn)
+
+	for newChannel := range chans {
+		if newChannel.ChannelType() != "session" {
+			newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
+			continue
+		}
+
+		channel, request, err := newChannel.Accept()
+		if err != nil {
+			fmt.Println("Failed to accept the channel:", err.Error())
+			return
+		}
+
+		client := h.newClient(sshConn.User(), channel)
+		go client.HandleSession(request, h)
+	}
 }
 
 func main() {
@@ -99,6 +211,7 @@ func startServer() {
 		NoClientAuth: true,
 	}
 
+	// to do
 	hostKeyPath := filepath.Join(".ssh", "host_ed25519")
 	privateKeyBytes, err := os.ReadFile(hostKeyPath)
 	if err != nil {
@@ -131,12 +244,12 @@ func startServer() {
 	}
 
 	privateKey := ed25519.PrivateKey(privateKeyBytes)
+	// to do
 	signer, err := ssh.NewSignerFromKey(privateKey)
 	if err != nil {
 		fmt.Println("failed to create signer", err.Error())
 		os.Exit(1)
 	}
-
 	config.AddHostKey(signer)
 
 	defer func(listener net.Listener) {
@@ -153,96 +266,6 @@ func startServer() {
 			fmt.Println("Error accepting connection", err.Error())
 			continue
 		}
-		go handleConnection(conn, mainHub, config)
-	}
-}
-
-func handleConnection(conn net.Conn, hub *Hub, config *ssh.ServerConfig) {
-	sshConn, chans, req, err := ssh.NewServerConn(conn, config)
-
-	if err != nil {
-		fmt.Println("SSH Handshake failed:", err)
-		return
-	}
-
-	fmt.Printf("New SSH connection from %s (%s)\n", sshConn.RemoteAddr(), sshConn.ClientVersion())
-
-	go ssh.DiscardRequests(req)
-	defer func(sshConn *ssh.ServerConn) {
-		err := sshConn.Close()
-		if err != nil {
-			fmt.Println(err.Error())
-		}
-	}(sshConn)
-
-	for newChannel := range chans {
-		if newChannel.ChannelType() != "session" {
-			newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
-			continue
-		}
-
-		channel, request, err := newChannel.Accept()
-
-		if err != nil {
-			fmt.Println("Failed to accept the channel:", err.Error())
-			return
-		}
-
-		client := &Client{
-			username: sshConn.User(),
-			receive:  make(chan []byte, 16),
-		}
-		go HandleSession(channel, request, hub, client)
-	}
-}
-
-func HandleSession(chanl ssh.Channel, requests <-chan *ssh.Request, hub *Hub, client *Client) {
-	registered := false
-	defer func() {
-		if registered {
-			hub.unregisterClient(client)
-		}
-		if err := chanl.Close(); err != nil {
-			fmt.Println("Failed to close user channel:", err.Error())
-		}
-	}()
-
-	go func() {
-		for req := range requests {
-			if req.Type == "pty-req" || req.Type == "shell" {
-				req.Reply(true, nil)
-			} else {
-				req.Reply(false, nil)
-			}
-		}
-	}()
-
-	client.ui = term.NewTerminal(chanl, "> ")
-
-	_, err := client.ui.Write([]byte("Welcome to nite-chat!\r\n"))
-	if err != nil {
-		fmt.Println("Failed to write to user:", err.Error())
-		return
-	}
-
-	hub.registerClient(client)
-	registered = true
-	go client.Listen()
-
-	for {
-		line, err := client.ui.ReadLine()
-		if err != nil {
-			fmt.Println("User disconnected or error:", err.Error())
-			return
-		}
-
-		line = strings.TrimSpace(line)
-
-		if line == "/leave" {
-			chanl.Close()
-			return
-		}
-
-		hub.sendMessage([]byte(line + "\r\n"))
+		go mainHub.handleConnection(conn, config)
 	}
 }
