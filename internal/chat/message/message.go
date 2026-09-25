@@ -1,6 +1,7 @@
 package message
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -18,6 +19,6 @@ func NewMessage(sender *User, body string) *Message {
 	}
 }
 
-func (m Message) String() string {
-	return m.body
+func (m *Message) Render() string {
+	return fmt.Sprintf("%s: %s\r\n", m.sender, m.body)
 }

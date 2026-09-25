@@ -1,9 +1,11 @@
 package chat
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"nite-chat/internal/chat/message"
+	"sync"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -12,6 +14,9 @@ type Server struct {
 	address string
 	config  *ssh.ServerConfig
 	hub     *Hub
+
+	mu       sync.Mutex
+	listener net.Listener
 }
 
 func NewServer(address string, signer ssh.Signer) *Server {
@@ -25,15 +30,33 @@ func NewServer(address string, signer ssh.Signer) *Server {
 	}
 }
 
+func (s *Server) Shutdown() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	listener := s.listener
+
+	if listener == nil {
+		return nil
+	}
+	return listener.Close()
+}
+
 func (s *Server) ListenAndServe() error {
 	listener, err := net.Listen("tcp", s.address)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", s.address, err)
 	}
+
+	s.mu.Lock()
+	s.listener = listener
+	s.mu.Unlock()
+
 	defer func() {
-		if err := listener.Close(); err != nil {
-			fmt.Println("failed to close listener:", err)
-		}
+		s.mu.Lock()
+		s.listener = nil
+		s.mu.Unlock()
+
+		_ = listener.Close()
 	}()
 
 	go s.hub.Run()
@@ -42,8 +65,10 @@ func (s *Server) ListenAndServe() error {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			fmt.Println("Error accepting connection:", err)
-			continue
+			if errors.Is(err, net.ErrClosed) {
+				return nil
+			}
+			return fmt.Errorf("accept connection: %w", err)
 		}
 		go s.handleConnection(conn)
 	}

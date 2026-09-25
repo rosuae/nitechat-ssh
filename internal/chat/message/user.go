@@ -37,7 +37,10 @@ func NewUser(hub Hub, username string, channel ssh.Channel) *User {
 
 func (u *User) Listen() {
 	for msg := range u.receive {
-		if _, err := u.ui.Write([]byte(msg.String())); err != nil {
+		if msg == nil {
+			continue
+		}
+		if _, err := u.ui.Write([]byte(msg.Render())); err != nil {
 			fmt.Println("Failed to write to user:", err)
 			return
 		}
@@ -85,9 +88,15 @@ func (u *User) HandleSession(requests <-chan *ssh.Request) {
 	go func() {
 		for req := range requests {
 			if req.Type == "pty-req" || req.Type == "shell" {
-				req.Reply(true, nil)
+				err := req.Reply(true, nil)
+				if err != nil {
+					return
+				}
 			} else {
-				req.Reply(false, nil)
+				err := req.Reply(false, nil)
+				if err != nil {
+					return
+				}
 			}
 		}
 	}()
