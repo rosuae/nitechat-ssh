@@ -3,6 +3,7 @@ package chat
 import (
 	"fmt"
 	"net"
+	"nite-chat/internal/chat/message"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -75,7 +76,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			return
 		}
 
-		client := s.hub.newClient(sshConn.User(), channel)
-		go client.handleSession(requests)
+		user := message.NewUser(s.hub, sshConn.User(), channel)
+		go user.HandleSession(requests)
 	}
 }

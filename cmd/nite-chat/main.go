@@ -3,14 +3,19 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"nite-chat/internal/chat"
 	"nite-chat/internal/hostkey"
 )
 
 func main() {
-	signer, err := hostkey.LoadSigner(filepath.Join(".ssh", "host_ed25519"))
+	hostKeyPath, err := hostkey.DefaultPath()
+	if err != nil {
+		fmt.Println("failed to find host key directory:", err)
+		os.Exit(1)
+	}
+
+	signer, err := hostkey.LoadSigner(hostKeyPath)
 	if err != nil {
 		fmt.Println("failed to load host key:", err)
 		os.Exit(1)

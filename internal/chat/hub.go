@@ -3,69 +3,58 @@ package chat
 import (
 	"fmt"
 
-	"golang.org/x/crypto/ssh"
-	"golang.org/x/term"
+	"nite-chat/internal/chat/message"
 )
 
 type Hub struct {
-	clients    map[*Client]bool
-	broadcast  chan []byte
-	register   chan *Client
-	unregister chan *Client
+	users      map[*message.User]bool
+	broadcast  chan *message.Message
+	register   chan *message.User
+	unregister chan *message.User
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		clients:    make(map[*Client]bool),
-		broadcast:  make(chan []byte),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
+		users:      make(map[*message.User]bool),
+		broadcast:  make(chan *message.Message),
+		register:   make(chan *message.User),
+		unregister: make(chan *message.User),
 	}
 }
 
 func (h *Hub) Run() {
 	for {
 		select {
-		case client := <-h.register:
-			h.clients[client] = true
-		case client := <-h.unregister:
-			if _, ok := h.clients[client]; ok {
-				delete(h.clients, client)
-				close(client.receive)
+		case user := <-h.register:
+			h.users[user] = true
+		case user := <-h.unregister:
+			if _, ok := h.users[user]; ok {
+				delete(h.users, user)
+				user.CloseReceive()
 			}
 		case message := <-h.broadcast:
-			for client := range h.clients {
-				if !client.send(message) {
-					fmt.Println("Failed to write to user:", client.username)
-					delete(h.clients, client)
-					close(client.receive)
-					client.closeConn()
+			for user := range h.users {
+				if !user.Send(message) {
+					fmt.Println("Failed to write to user:", user.Username())
+					delete(h.users, user)
+					user.CloseReceive()
+					user.CloseConn()
 				}
 			}
 		}
 	}
 }
 
-func (h *Hub) newClient(username string, channel ssh.Channel) *Client {
-	return &Client{
-		hub:      h,
-		ui:       term.NewTerminal(channel, "> "),
-		channel:  channel,
-		username: username,
-		receive:  make(chan []byte),
-	}
+func (h *Hub) RegisterUser(user *message.User) {
+	h.register <- user
+	fmt.Println("Register user:", user.Username())
 }
 
-func (h *Hub) registerClient(client *Client) {
-	h.register <- client
-	fmt.Println("Register client:", client.username)
+func (h *Hub) UnregisterUser(user *message.User) {
+	h.unregister <- user
+	fmt.Println("Unregister user:", user.Username())
 }
 
-func (h *Hub) unregisterClient(client *Client) {
-	h.unregister <- client
-	fmt.Println("Unregister client:", client.username)
-}
-
-func (h *Hub) sendMessage(message []byte) {
-	h.broadcast <- message
+func (h *Hub) SendMessage(msg *message.Message) {
+	h.broadcast <- msg
 }

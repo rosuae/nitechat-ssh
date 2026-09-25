@@ -6,9 +6,25 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"golang.org/x/crypto/ssh"
 )
+
+const (
+	hostKeyDirectory = "cmd/nite-chat/.ssh"
+	hostKeyFilename  = "host_ed25519"
+)
+
+func DefaultPath() (string, error) {
+	_, sourcePath, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", fmt.Errorf("find hostkey package path")
+	}
+
+	projectRoot := filepath.Clean(filepath.Join(filepath.Dir(sourcePath), "..", ".."))
+	return filepath.Join(projectRoot, hostKeyDirectory, hostKeyFilename), nil
+}
 
 func LoadSigner(path string) (ssh.Signer, error) {
 	privateKeyBytes, err := os.ReadFile(path)
