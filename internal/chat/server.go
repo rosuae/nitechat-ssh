@@ -6,6 +6,7 @@ import (
 	"net"
 	"nite-chat/internal/chat/message"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -15,19 +16,42 @@ type Server struct {
 	config  *ssh.ServerConfig
 	hub     *Hub
 
+	allowlistOnly  bool
+	keysMu         sync.RWMutex
+	authorizedKeys map[string]struct{} // turn into ssh.PublicKey
+
 	mu       sync.Mutex
 	listener net.Listener
 }
 
-func NewServer(address string, signer ssh.Signer) *Server {
-	config := &ssh.ServerConfig{NoClientAuth: true}
-	config.AddHostKey(signer)
-
-	return &Server{
-		address: address,
-		config:  config,
-		hub:     NewHub(),
+func NewServer(address string, signer ssh.Signer, allowlistOnly bool) *Server {
+	s := &Server{
+		address:        address,
+		hub:            NewHub(),
+		allowlistOnly:  allowlistOnly,
+		authorizedKeys: make(map[string]struct{}),
 	}
+	s.config = &ssh.ServerConfig{
+		MaxAuthTries: 3,
+		PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			fp := ssh.FingerprintSHA256(key)
+			if s.allowlistOnly && !s.isAuthorizedKey(fp) {
+				return nil, fmt.Errorf("%s is not authorized", fp)
+			}
+			return &ssh.Permissions{
+				Extensions: map[string]string{"fingerprint": fp},
+			}, nil
+		},
+	}
+	s.config.AddHostKey(signer)
+	return s
+}
+
+func (s *Server) isAuthorizedKey(key string) bool {
+	s.keysMu.RLock()
+	defer s.keysMu.RUnlock()
+	_, ok := s.authorizedKeys[key]
+	return ok
 }
 
 func (s *Server) Shutdown() error {
@@ -75,11 +99,16 @@ func (s *Server) ListenAndServe() error {
 }
 
 func (s *Server) handleConnection(conn net.Conn) {
+	conn.SetDeadline(time.Now().Add(30 * time.Second))
+
 	sshConn, channels, requests, err := ssh.NewServerConn(conn, s.config)
 	if err != nil {
 		fmt.Println("SSH Handshake failed:", err)
+		conn.Close()
 		return
 	}
+	fp := sshConn.Permissions.Extensions["fingerprint"]
+
 	fmt.Printf("New SSH connection from %s (%s)\n", sshConn.RemoteAddr(), sshConn.ClientVersion())
 
 	go ssh.DiscardRequests(requests)
@@ -101,7 +130,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			return
 		}
 
-		user := message.NewUser(s.hub, sshConn.User(), channel)
+		user := message.NewUser(s.hub, fp, sshConn.User(), channel)
 		go user.HandleSession(requests)
 	}
 }

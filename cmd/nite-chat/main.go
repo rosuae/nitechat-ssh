@@ -23,7 +23,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	server := chat.NewServer(":2222", signer)
+	server := chat.NewServer(":2222", signer, false)
 
 	serverErr := make(chan error, 1)
 	go func() {

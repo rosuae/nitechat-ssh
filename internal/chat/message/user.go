@@ -13,6 +13,7 @@ type User struct {
 	hub         Hub
 	ui          *term.Terminal
 	channel     ssh.Channel
+	fingerprint string
 	username    string
 	receive     chan *Message
 	closeOnce   sync.Once
@@ -25,13 +26,14 @@ type Hub interface {
 	SendMessage(*Message)
 }
 
-func NewUser(hub Hub, username string, channel ssh.Channel) *User {
+func NewUser(hub Hub, fp string, username string, channel ssh.Channel) *User {
 	return &User{
-		hub:      hub,
-		ui:       term.NewTerminal(channel, "> "),
-		channel:  channel,
-		username: username,
-		receive:  make(chan *Message),
+		hub:         hub,
+		ui:          term.NewTerminal(channel, "> "),
+		channel:     channel,
+		fingerprint: fp,
+		username:    username,
+		receive:     make(chan *Message),
 	}
 }
 
