@@ -28,12 +28,14 @@ type Hub interface {
 
 func NewUser(hub Hub, fp string, username string, channel ssh.Channel) *User {
 	return &User{
-		hub:         hub,
-		ui:          term.NewTerminal(channel, "> "),
-		channel:     channel,
+		hub:     hub,
+		ui:      term.NewTerminal(channel, "> "),
+		channel: channel,
+
 		fingerprint: fp,
 		username:    username,
-		receive:     make(chan *Message),
+
+		receive: make(chan *Message),
 	}
 }
 
@@ -73,7 +75,7 @@ func (u *User) CloseReceive() {
 }
 
 func (u *User) Username() string {
-	return u.username
+	return u.username + "@" + u.fingerprint[len(u.fingerprint)-4:]
 }
 
 func (u *User) HandleSession(requests <-chan *ssh.Request) {

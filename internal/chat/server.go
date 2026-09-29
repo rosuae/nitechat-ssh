@@ -18,10 +18,9 @@ type Server struct {
 
 	allowlistOnly  bool
 	keysMu         sync.RWMutex
-	authorizedKeys map[string]struct{} // turn into ssh.PublicKey
-
-	mu       sync.Mutex
-	listener net.Listener
+	authorizedKeys map[string]struct{}
+	mu             sync.Mutex
+	listener       net.Listener
 }
 
 func NewServer(address string, signer ssh.Signer, allowlistOnly bool) *Server {
@@ -99,7 +98,11 @@ func (s *Server) ListenAndServe() error {
 }
 
 func (s *Server) handleConnection(conn net.Conn) {
-	conn.SetDeadline(time.Now().Add(30 * time.Second))
+	err := conn.SetDeadline(time.Now().Add(30 * time.Second))
+	if err != nil {
+		fmt.Println("Error setting deadline:", err)
+		return
+	}
 
 	sshConn, channels, requests, err := ssh.NewServerConn(conn, s.config)
 	if err != nil {
@@ -107,6 +110,13 @@ func (s *Server) handleConnection(conn net.Conn) {
 		conn.Close()
 		return
 	}
+
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		fmt.Println("Failed to clear connection deadline", err)
+		_ = sshConn.Close()
+		return
+	}
+
 	fp := sshConn.Permissions.Extensions["fingerprint"]
 
 	fmt.Printf("New SSH connection from %s (%s)\n", sshConn.RemoteAddr(), sshConn.ClientVersion())
