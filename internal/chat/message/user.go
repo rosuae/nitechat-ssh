@@ -9,8 +9,9 @@ import (
 	"golang.org/x/term"
 )
 
+// to do: notifications channel
 type User struct {
-	hub         Hub
+	currentHub  Hub
 	ui          *term.Terminal
 	channel     ssh.Channel
 	fingerprint string
@@ -28,9 +29,9 @@ type Hub interface {
 
 func NewUser(hub Hub, fp string, username string, channel ssh.Channel) *User {
 	return &User{
-		hub:     hub,
-		ui:      term.NewTerminal(channel, "> "),
-		channel: channel,
+		currentHub: hub,
+		ui:         term.NewTerminal(channel, "> "),
+		channel:    channel,
 
 		fingerprint: fp,
 		username:    username,
@@ -82,7 +83,7 @@ func (u *User) HandleSession(requests <-chan *ssh.Request) {
 	registered := false
 	defer func() {
 		if registered {
-			u.hub.UnregisterUser(u)
+			u.currentHub.UnregisterUser(u)
 		}
 		if err := u.channel.Close(); err != nil {
 			fmt.Println("Failed to close user channel:", err)
@@ -110,7 +111,7 @@ func (u *User) HandleSession(requests <-chan *ssh.Request) {
 		return
 	}
 
-	u.hub.RegisterUser(u)
+	u.currentHub.RegisterUser(u)
 	registered = true
 	go u.Listen()
 
@@ -127,6 +128,6 @@ func (u *User) HandleSession(requests <-chan *ssh.Request) {
 			return
 		}
 		msg := NewMessage(u, line)
-		u.hub.SendMessage(msg)
+		u.currentHub.SendMessage(msg)
 	}
 }
