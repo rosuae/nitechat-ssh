@@ -57,7 +57,7 @@ session lifecycle are implemented in `internal/chat`, while host-key loading
 is handled by `internal/hostkey`.
 
 Each SSH connection creates a `message.User`. The user reads input from its
-session and sends messages to the chat `Hub`. The hub tracks registered users
+session and sends messages to the chat `Hub`. The currentHub tracks registered users
 and broadcasts each message to all connected users, including its sender.
 Each user has a receive channel and a listener goroutine that writes incoming
 messages to that user's SSH terminal.
@@ -75,7 +75,7 @@ message.User ---> Hub ---> connected users
 
 ```text
 cmd/nite-chat/        Application entry point
-internal/chat/        SSH server, hub, and session management
+internal/chat/        SSH server, currentHub, and session management
 internal/chat/message/
                       Users and chat messages
 internal/hostkey/     Ed25519 host-key loading

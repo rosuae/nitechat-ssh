@@ -3,18 +3,24 @@ package chat
 import (
 	"fmt"
 	"nite-chat/internal/chat/message"
+	"sync"
 )
 
+// to do: user hub ownership / allowed users, hub invite
 type Hub struct {
+	hubName    string
 	users      map[*message.User]bool
 	broadcast  chan *message.Message
 	register   chan *message.User
 	unregister chan *message.User
 	done       chan struct{}
+
+	mu sync.RWMutex
 }
 
-func NewHub() *Hub {
+func NewHub(name string) *Hub {
 	return &Hub{
+		hubName:    name,
 		users:      make(map[*message.User]bool),
 		broadcast:  make(chan *message.Message),
 		register:   make(chan *message.User),
@@ -64,4 +70,10 @@ func (h *Hub) UnregisterUser(user *message.User) {
 
 func (h *Hub) SendMessage(msg *message.Message) {
 	h.broadcast <- msg
+}
+
+func (h *Hub) UserCount() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.users)
 }
