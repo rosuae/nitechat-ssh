@@ -77,3 +77,9 @@ func (h *Hub) UserCount() int {
 	defer h.mu.RUnlock()
 	return len(h.users)
 }
+
+func (h *Hub) HubDetails() (string, int) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.hubName, h.UserCount()
+}

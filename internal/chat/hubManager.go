@@ -1,6 +1,8 @@
 package chat
 
 import (
+	"fmt"
+	"nite-chat/internal/chat/message"
 	"sort"
 	"sync"
 )
@@ -10,19 +12,16 @@ type HubManager struct {
 	mu   sync.RWMutex
 }
 
-type HubInfo struct {
-	name  string
-	count int
-}
+type HubInfo = message.HubInfo
 
-func NewRoomManager() *HubManager {
+func NewHubManager() *HubManager {
 	return &HubManager{
 		hubs: make(map[string]*Hub),
 	}
 }
 
 // create (to do: fix the case where two users want the same room name)
-func (m *HubManager) GetOrCreate(name string) *Hub {
+func (m *HubManager) GetOrCreate(name string) message.Hub {
 	m.mu.RLock()
 	hub, ok := m.hubs[name]
 	m.mu.RUnlock()
@@ -37,6 +36,8 @@ func (m *HubManager) GetOrCreate(name string) *Hub {
 	}
 	h := NewHub(name)
 	m.hubs[name] = h
+	go h.Run()
+	fmt.Printf("Created hub: %s\n", name)
 	return h
 }
 
@@ -50,7 +51,7 @@ func (m *HubManager) ListRooms() []HubInfo {
 		hubs = append(hubs, HubInfo{name, hub.UserCount()})
 	}
 	sort.Slice(hubs, func(i, j int) bool {
-		return hubs[i].name < hubs[j].name
+		return hubs[i].Name < hubs[j].Name
 	})
 	return hubs
 }
