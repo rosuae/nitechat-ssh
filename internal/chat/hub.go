@@ -14,12 +14,14 @@ type Hub struct {
 	register   chan *message.User
 	unregister chan *message.User
 	done       chan struct{}
+	onEmpty    func(*Hub)
 
-	mu sync.RWMutex
+	mu           sync.RWMutex
+	shutdownOnce sync.Once
 }
 
-func NewHub(name string) *Hub {
-	return &Hub{
+func NewHub(name string, onEmpty ...func(*Hub)) *Hub {
+	hub := &Hub{
 		hubName:    name,
 		users:      make(map[*message.User]bool),
 		broadcast:  make(chan *message.Message),
@@ -27,6 +29,10 @@ func NewHub(name string) *Hub {
 		unregister: make(chan *message.User),
 		done:       make(chan struct{}),
 	}
+	if len(onEmpty) > 0 {
+		hub.onEmpty = onEmpty[0]
+	}
+	return hub
 }
 
 func (h *Hub) Run() {
@@ -40,6 +46,7 @@ func (h *Hub) Run() {
 			if _, ok := h.users[user]; ok {
 				delete(h.users, user)
 				user.CloseReceive()
+				h.cleanupIfEmpty()
 			}
 		case msg := <-h.broadcast:
 			for user := range h.users {
@@ -48,6 +55,7 @@ func (h *Hub) Run() {
 					delete(h.users, user)
 					user.CloseReceive()
 					user.CloseConn()
+					h.cleanupIfEmpty()
 				}
 			}
 		}
@@ -55,15 +63,27 @@ func (h *Hub) Run() {
 }
 
 func (h *Hub) Shutdown() {
-	close(h.done)
+	h.shutdownOnce.Do(func() {
+		close(h.done)
+	})
+}
+
+func (h *Hub) cleanupIfEmpty() {
+	if len(h.users) == 0 && h.onEmpty != nil {
+		h.onEmpty(h)
+	}
 }
 
 func (h *Hub) RegisterUser(user *message.User) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	h.register <- user
 	fmt.Println("Register user:", user.Username())
 }
 
 func (h *Hub) UnregisterUser(user *message.User) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.unregister <- user
 	fmt.Println("Unregister user:", user.Username())
 }
@@ -72,14 +92,8 @@ func (h *Hub) SendMessage(msg *message.Message) {
 	h.broadcast <- msg
 }
 
-func (h *Hub) UserCount() int {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return len(h.users)
-}
-
 func (h *Hub) HubDetails() (string, int) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	return h.hubName, h.UserCount()
+	return h.hubName, len(h.users)
 }

@@ -11,7 +11,7 @@ separate client application.
 - One chat session per connected user
 - Hub-based message broadcasting
 - Persistent Ed25519 server host key
-- `/leave` command for cleanly disconnecting
+- `/disconnect` command for cleanly disconnecting
 
 ## Requirements
 
