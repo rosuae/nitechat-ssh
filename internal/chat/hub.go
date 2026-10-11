@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"nite-chat/internal/chat/message"
 	"sync"
+	"sync/atomic"
 )
 
 // to do: user hub ownership / allowed users, hub invite
@@ -15,8 +16,8 @@ type Hub struct {
 	unregister chan *message.User
 	done       chan struct{}
 	onEmpty    func(*Hub)
+	userCount  atomic.Int64
 
-	mu           sync.RWMutex
 	shutdownOnce sync.Once
 }
 
@@ -42,21 +43,28 @@ func (h *Hub) Run() {
 			return
 		case user := <-h.register:
 			h.users[user] = true
+			h.userCount.Add(1)
 		case user := <-h.unregister:
 			if _, ok := h.users[user]; ok {
 				delete(h.users, user)
-				user.CloseReceive()
+				h.userCount.Add(-1)
 				h.cleanupIfEmpty()
 			}
 		case msg := <-h.broadcast:
+			var failed []*message.User
 			for user := range h.users {
 				if !user.Send(msg) {
 					fmt.Println("Failed to write to user:", user.Username())
-					delete(h.users, user)
-					user.CloseReceive()
-					user.CloseConn()
-					h.cleanupIfEmpty()
+					failed = append(failed, user)
 				}
+			}
+			for _, user := range failed {
+				delete(h.users, user)
+				h.userCount.Add(-1)
+				user.CloseConn()
+			}
+			if len(failed) > 0 {
+				h.cleanupIfEmpty()
 			}
 		}
 	}
@@ -75,25 +83,30 @@ func (h *Hub) cleanupIfEmpty() {
 }
 
 func (h *Hub) RegisterUser(user *message.User) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	h.register <- user
+	select {
+	case h.register <- user:
+	case <-h.done:
+		return
+	}
 	fmt.Println("Register user:", user.Username())
 }
 
 func (h *Hub) UnregisterUser(user *message.User) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.unregister <- user
+	select {
+	case h.unregister <- user:
+	case <-h.done:
+		return
+	}
 	fmt.Println("Unregister user:", user.Username())
 }
 
 func (h *Hub) SendMessage(msg *message.Message) {
-	h.broadcast <- msg
+	select {
+	case h.broadcast <- msg:
+	case <-h.done:
+	}
 }
 
 func (h *Hub) HubDetails() (string, int) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.hubName, len(h.users)
+	return h.hubName, int(h.userCount.Load())
 }
