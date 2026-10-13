@@ -14,7 +14,7 @@ import (
 type Server struct {
 	address string
 	config  *ssh.ServerConfig
-	hub     *Hub
+	hubMan  *HubManager
 
 	allowlistOnly  bool
 	keysMu         sync.RWMutex
@@ -26,7 +26,7 @@ type Server struct {
 func NewServer(address string, signer ssh.Signer, allowlistOnly bool) *Server {
 	s := &Server{
 		address:        address,
-		hub:            NewHub(),
+		hubMan:         NewHubManager(),
 		allowlistOnly:  allowlistOnly,
 		authorizedKeys: make(map[string]struct{}),
 	}
@@ -82,7 +82,6 @@ func (s *Server) ListenAndServe() error {
 		_ = listener.Close()
 	}()
 
-	go s.hub.Run()
 	fmt.Println("Listening on " + listener.Addr().String())
 
 	for {
@@ -140,7 +139,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			return
 		}
 
-		user := message.NewUser(s.hub, fp, sshConn.User(), channel)
+		user := message.NewUser(s.hubMan, fp, sshConn.User(), channel)
 		go user.HandleSession(requests)
 	}
 }
