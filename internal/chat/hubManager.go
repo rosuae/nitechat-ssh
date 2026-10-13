@@ -59,6 +59,18 @@ func (m *HubManager) ListRooms() []HubInfo {
 	return hubs
 }
 
+func (m * HubManager) GetRoomInfo(name string) (HubInfo, bool) {
+	m.mu.RLock()
+	hub, ok := m.hubs[name]
+	m.mu.RUnlock()
+	if !ok {
+		return message.HubInfo{}, false
+	}
+
+	hubName, userCount := hub.HubDetails()
+	return message.HubInfo{Name: hubName, Count: userCount}, true
+}
+
 // find
 func (m *HubManager) Find(name string) *Hub {
 	m.mu.RLock()

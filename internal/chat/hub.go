@@ -89,6 +89,7 @@ func (h *Hub) RegisterUser(user *message.User) {
 		return
 	}
 	fmt.Println("Register user:", user.Username())
+	h.SendMessage(message.NewSystemMessage(user.Username() + " has joined your hub. Say Hi!"))
 }
 
 func (h *Hub) UnregisterUser(user *message.User) {
@@ -98,6 +99,7 @@ func (h *Hub) UnregisterUser(user *message.User) {
 		return
 	}
 	fmt.Println("Unregister user:", user.Username())
+	h.SendMessage(message.NewSystemMessage(user.Username() + " has left your hub."))
 }
 
 func (h *Hub) SendMessage(msg *message.Message) {

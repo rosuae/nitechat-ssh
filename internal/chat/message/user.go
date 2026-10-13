@@ -26,6 +26,7 @@ type User struct {
 type HubManager interface {
 	GetOrCreate(string) Hub
 	ListRooms() []HubInfo
+	GetRoomInfo(string) (HubInfo, bool)
 }
 
 type Hub interface {
@@ -103,6 +104,10 @@ func (u *User) inputLoop() {
 			if quit := u.handleCommand(line); quit { // handleCommand returns true when the user quits the server
 				return
 			}
+			continue
+		}
+		if len([]rune(line)) > messageMaxLength {
+			_ = u.tty.WriteLine("couldn't send, length limit reached: " + fmt.Sprint(messageMaxLength))
 			continue
 		}
 		hub := u.currentHubSafe()

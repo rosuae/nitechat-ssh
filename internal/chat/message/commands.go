@@ -23,7 +23,7 @@ func (u *User) handleCommand(line string) bool {
 			_ = u.tty.WriteLine("Usage: /join <room>")
 			return false
 		}
-		err := u.JoinHub(args[0])
+		err := u.handleJoin(args[0])
 		if err != nil {
 			return false
 		}
@@ -31,6 +31,39 @@ func (u *User) handleCommand(line string) bool {
 		_ = u.tty.WriteLine("Unknown command: " + cmd)
 	}
 	return false
+}
+
+func (u *User) handleJoin(hub string) error {
+	if _, ok := u.hubMan.GetRoomInfo(hub); ok {
+		return u.JoinHub(hub)
+	}
+
+	answer, err := u.interogate("That room does not exist. Create it? [y/N]")
+	if err != nil {
+		return err
+	}
+
+	switch strings.ToLower(strings.TrimSpace(answer)) {
+	case "y", "yes":
+		return u.JoinHub(hub)
+	case "", "n", "no":
+		return nil
+	default:
+		return u.tty.WriteLine("Room not created. Please answer yes or no.")
+	}
+}
+
+func (u *User) interogate(question string) (string, error) {
+	if err := u.tty.WriteLine(question); err != nil {
+		return "", err
+	}
+
+	answer, err := u.tty.ReadLine()
+	if err != nil {
+		return "", err
+	}
+	u.tty.EraseEcho(answer)
+	return answer, nil
 }
 
 func (u *User) listHubs() {
