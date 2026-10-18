@@ -13,6 +13,8 @@ needing a separate client application.
 - Basic SSH terminal and PTY support
 - `/disconnect` and `/quit` commands for leaving a room or session
 - A 20-character message length limit
+- Per-user message rate limiting with escalating cooldowns
+- Per-user room-join limiting with temporary bans
 
 ## Requirements
 
@@ -44,7 +46,11 @@ join or create one:
 ```
 
 Once connected to a room, type a message and press Enter. Messages longer
-than 20 characters are rejected.
+than 20 characters are rejected. Messages are limited to five messages in
+five seconds per user. Exceeding that limit starts a one-second cooldown;
+repeated violations double the cooldown up to 30 seconds. Ten room-join
+attempts within one minute result in a 30-second temporary ban from joining
+rooms.
 
 ## Client commands
 

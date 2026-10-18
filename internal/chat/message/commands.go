@@ -3,6 +3,7 @@ package message
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 func (u *User) handleCommand(line string) bool {
@@ -34,6 +35,10 @@ func (u *User) handleCommand(line string) bool {
 }
 
 func (u *User) handleJoin(hub string) error {
+	if allowed, retryAfter := u.joinRateLimiter.Allow(time.Now()); !allowed {
+		return u.tty.WriteLine("Too many room join attempts. Try again in " + formatRetryAfter(retryAfter) + ".")
+	}
+
 	if _, ok := u.hubMan.GetRoomInfo(hub); ok {
 		return u.JoinHub(hub)
 	}
