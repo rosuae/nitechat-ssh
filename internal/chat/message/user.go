@@ -33,7 +33,7 @@ type HubManager interface {
 }
 
 type Hub interface {
-	RegisterUser(*User)
+	RegisterUser(*User) bool
 	UnregisterUser(*User)
 	SendMessage(*Message)
 	HubDetails() (string, int)
@@ -174,7 +174,10 @@ func (u *User) JoinHub(room string) error {
 	}
 
 	newHub := u.hubMan.GetOrCreate(room)
-	newHub.RegisterUser(u)
+	if success := newHub.RegisterUser(u); !success {
+		u.tty.WriteLine("Cannot join, hub is full or you're already connected.")
+		return nil
+	}
 
 	if u.currentHub != nil {
 		oldHub := u.currentHub
