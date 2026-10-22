@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+var messageMaxLength = 20
+
 type Message struct {
 	sender    string
 	body      string
@@ -15,6 +17,14 @@ func NewMessage(sender *User, body string) *Message {
 	return &Message{
 		sender:    sender.Username(),
 		body:      body,
+		timestamp: time.Now(),
+	}
+}
+
+func NewSystemMessage(body string) *Message {
+	return &Message{
+		sender: "system",
+		body: body,
 		timestamp: time.Now(),
 	}
 }

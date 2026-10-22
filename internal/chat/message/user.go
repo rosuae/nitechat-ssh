@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -13,10 +14,12 @@ type User struct {
 	hubMan     HubManager
 	currentHub Hub
 
-	tty         *Terminal
+	tty *Terminal
 	fingerprint string
-	username    string
-	receive     chan *Message
+	username string
+	receive chan *Message
+	messageRateLimiter messageRateLimiter
+	joinRateLimiter joinRateLimiter
 
 	closeOnce sync.Once
 	connOnce  sync.Once
@@ -26,10 +29,11 @@ type User struct {
 type HubManager interface {
 	GetOrCreate(string) Hub
 	ListRooms() []HubInfo
+	GetRoomInfo(string) (HubInfo, bool)
 }
 
 type Hub interface {
-	RegisterUser(*User)
+	RegisterUser(*User) bool
 	UnregisterUser(*User)
 	SendMessage(*Message)
 	HubDetails() (string, int)
@@ -105,6 +109,10 @@ func (u *User) inputLoop() {
 			}
 			continue
 		}
+		if len([]rune(line)) > messageMaxLength {
+			_ = u.tty.WriteLine("couldn't send, length limit reached: " + fmt.Sprint(messageMaxLength))
+			continue
+		}
 		hub := u.currentHubSafe()
 		if hub == nil {
 			err := u.tty.WriteLine("You are not connected to any room. Use /join <room>.")
@@ -113,9 +121,21 @@ func (u *User) inputLoop() {
 			}
 			continue
 		}
+		if allowed, retryAfter := u.messageRateLimiter.Allow(time.Now()); !allowed {
+			_ = u.tty.WriteLine("Message rate limit exceeded. Try again in " + formatRetryAfter(retryAfter) + ".")
+			continue
+		}
 		u.tty.EraseEcho(raw)
 		hub.SendMessage(NewMessage(u, line))
 	}
+}
+
+func formatRetryAfter(duration time.Duration) string {
+	seconds := int(duration / time.Second)
+	if duration%time.Second != 0 {
+		seconds++
+	}
+	return fmt.Sprintf("%d second(s)", seconds)
 }
 
 func (u *User) currentHubSafe() Hub {
@@ -154,7 +174,10 @@ func (u *User) JoinHub(room string) error {
 	}
 
 	newHub := u.hubMan.GetOrCreate(room)
-	newHub.RegisterUser(u)
+	if success := newHub.RegisterUser(u); !success {
+		u.tty.WriteLine("Cannot join, hub is full or you're already connected.")
+		return nil
+	}
 
 	if u.currentHub != nil {
 		oldHub := u.currentHub

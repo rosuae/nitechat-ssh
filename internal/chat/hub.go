@@ -7,12 +7,21 @@ import (
 	"sync/atomic"
 )
 
+const (
+	maxUsers = 21
+)
+
+type registerRequest struct {
+	user   *message.User
+	result chan<- bool
+}
+
 // to do: user hub ownership / allowed users, hub invite
 type Hub struct {
 	hubName    string
 	users      map[*message.User]bool
 	broadcast  chan *message.Message
-	register   chan *message.User
+	register   chan registerRequest
 	unregister chan *message.User
 	done       chan struct{}
 	onEmpty    func(*Hub)
@@ -26,7 +35,7 @@ func NewHub(name string, onEmpty ...func(*Hub)) *Hub {
 		hubName:    name,
 		users:      make(map[*message.User]bool),
 		broadcast:  make(chan *message.Message),
-		register:   make(chan *message.User),
+		register:   make(chan registerRequest),
 		unregister: make(chan *message.User),
 		done:       make(chan struct{}),
 	}
@@ -41,9 +50,22 @@ func (h *Hub) Run() {
 		select {
 		case <-h.done:
 			return
-		case user := <-h.register:
-			h.users[user] = true
-			h.userCount.Add(1)
+		case request := <-h.register:
+			alreadyConnected := false
+			for existingUser := range h.users {
+				if existingUser.Username() == request.user.Username() {
+					alreadyConnected = true
+					break
+				}
+			}
+
+			if !alreadyConnected && len(h.users) < maxUsers {
+				h.users[request.user] = true
+				h.userCount.Add(1)
+				request.result <- true
+			} else {
+				request.result <- false
+			}
 		case user := <-h.unregister:
 			if _, ok := h.users[user]; ok {
 				delete(h.users, user)
@@ -82,13 +104,26 @@ func (h *Hub) cleanupIfEmpty() {
 	}
 }
 
-func (h *Hub) RegisterUser(user *message.User) {
+func (h *Hub) RegisterUser(user *message.User) bool {
+	result := make(chan bool, 1)
+
 	select {
-	case h.register <- user:
+	case h.register <- registerRequest{
+		user:   user,
+		result: result,
+	}:
 	case <-h.done:
-		return
+		return false
 	}
+
+	accepted := <-result
+	if !accepted {
+		return false
+	}
+
 	fmt.Println("Register user:", user.Username())
+	h.SendMessage(message.NewSystemMessage(user.Username() + " has joined your hub. Say Hi!"))
+	return true
 }
 
 func (h *Hub) UnregisterUser(user *message.User) {
@@ -98,6 +133,7 @@ func (h *Hub) UnregisterUser(user *message.User) {
 		return
 	}
 	fmt.Println("Unregister user:", user.Username())
+	h.SendMessage(message.NewSystemMessage(user.Username() + " has left your hub."))
 }
 
 func (h *Hub) SendMessage(msg *message.Message) {
@@ -106,6 +142,12 @@ func (h *Hub) SendMessage(msg *message.Message) {
 	case <-h.done:
 	}
 }
+
+// func (h *Hub) unicastSystemMessage(user *message.User, body string) {
+// 	if !user.Send(message.NewMessage(nil, body)) {
+// 		fmt.Println("Failed to write to user:", user.Username())
+// 	}
+// }
 
 func (h *Hub) HubDetails() (string, int) {
 	return h.hubName, int(h.userCount.Load())
