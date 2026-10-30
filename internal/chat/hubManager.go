@@ -8,20 +8,22 @@ import (
 )
 
 type HubManager struct {
-	hubs map[string]*Hub
-	mu   sync.RWMutex
+	server *Server
+	hubs   map[string]*Hub
+	mu     sync.RWMutex
 }
 
 type HubInfo = message.HubInfo
 
-func NewHubManager() *HubManager {
+func NewHubManager(server *Server) *HubManager {
 	return &HubManager{
-		hubs: make(map[string]*Hub),
+		server: server,
+		hubs:   make(map[string]*Hub),
 	}
 }
 
 // create (to do: fix the case where two users want the same room name)
-func (m *HubManager) GetOrCreate(name string) message.Hub {
+func (m *HubManager) GetOrCreate(name string, options message.HubOptions) message.Hub {
 	m.mu.RLock()
 	hub, ok := m.hubs[name]
 	m.mu.RUnlock()
@@ -34,7 +36,7 @@ func (m *HubManager) GetOrCreate(name string) message.Hub {
 	if hub, ok := m.hubs[name]; ok { // re-check if other go routine created the room
 		return hub
 	}
-	h := NewHub(name, func(hub *Hub) {
+	h := NewHub(name, options, func(hub *Hub) {
 		m.deleteIfEmpty(name, hub)
 	})
 	m.hubs[name] = h
@@ -59,7 +61,7 @@ func (m *HubManager) ListRooms() []HubInfo {
 	return hubs
 }
 
-func (m * HubManager) GetRoomInfo(name string) (HubInfo, bool) {
+func (m *HubManager) GetRoomInfo(name string) (HubInfo, bool) {
 	m.mu.RLock()
 	hub, ok := m.hubs[name]
 	m.mu.RUnlock()
@@ -71,11 +73,14 @@ func (m * HubManager) GetRoomInfo(name string) (HubInfo, bool) {
 	return message.HubInfo{Name: hubName, Count: userCount}, true
 }
 
-// find
 func (m *HubManager) Find(name string) *Hub {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.hubs[name]
+}
+
+func (m *HubManager) FindUser(username string) *message.User {
+	return m.server.findOnlineUser(username)
 }
 
 // delete (to do: handle users still in a room)

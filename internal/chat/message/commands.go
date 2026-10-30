@@ -28,10 +28,74 @@ func (u *User) handleCommand(line string) bool {
 		if err != nil {
 			return false
 		}
+	case "/invite":
+		if len(args) != 1 {
+			_ = u.tty.WriteLine("Usage: /invite <username>")
+			return false
+		}
+		u.invite(args[0])
+	case "/kick":
+		if len(args) != 1 {
+			_ = u.tty.WriteLine("Usage: /kick <username>")
+			return false
+		}
+		u.kick(args[0])
 	default:
 		_ = u.tty.WriteLine("Unknown command: " + cmd)
 	}
+
 	return false
+}
+
+func (u *User) invite(username string) {
+	hub := u.currentHubSafe()
+	if hub == nil {
+		_ = u.tty.WriteLine("You are not connected to any room. Use /join <room>.")
+		return
+	}
+
+	target := u.hubMan.FindUser(username)
+	if target == nil {
+		_ = u.tty.WriteLine("User not found: " + username)
+		return
+	}
+	if target == u {
+		_ = u.tty.WriteLine("You cannot invite yourself.")
+		return
+	}
+	if !hub.InviteUser(u, target) {
+		_ = u.tty.WriteLine("Invite failed. Only the private room owner can invite users, or the room is full.")
+		return
+	}
+	_ = u.tty.WriteLine("Invited " + target.Username() + ".")
+}
+
+func (u *User) kick(username string) {
+    hub := u.currentHubSafe()
+    if hub == nil {
+        _ = u.tty.WriteLine("You are not connected to any room. Use /join <room>.")
+        return
+    }
+
+    target := u.hubMan.FindUser(username)
+    if target == nil {
+        _ = u.tty.WriteLine("User not found: " + username)
+        return
+    }
+
+    if target == u {
+        _ = u.tty.WriteLine("You cannot kick yourself.")
+        return
+    }
+
+    if !hub.KickUser(u, target) {
+        _ = u.tty.WriteLine(
+            "Kick failed. Only the private room owner can kick users in the current room.",
+        )
+        return
+    }
+
+    _ = u.tty.WriteLine("Kicked " + target.Username() + ".")
 }
 
 func (u *User) handleJoin(hub string) error {
@@ -40,7 +104,7 @@ func (u *User) handleJoin(hub string) error {
 	}
 
 	if _, ok := u.hubMan.GetRoomInfo(hub); ok {
-		return u.JoinHub(hub)
+		return u.JoinHub(hub, HubOptions{})
 	}
 
 	answer, err := u.interogate("That room does not exist. Create it? [y/N]")
@@ -50,7 +114,18 @@ func (u *User) handleJoin(hub string) error {
 
 	switch strings.ToLower(strings.TrimSpace(answer)) {
 	case "y", "yes":
-		return u.JoinHub(hub)
+		answer, err = u.interogate("Make it private? [y/N]")
+		switch strings.ToLower(strings.TrimSpace(answer)) {
+		case "y", "yes":
+			return u.JoinHub(hub, HubOptions{
+				Private:          true,
+				OwnerFingerprint: u.Fingerprint(),
+			})
+		case "", "n", "no":
+			return u.JoinHub(hub, HubOptions{})
+		default:
+			return u.tty.WriteLine("Room not created. Please answer yes or no.")
+		}
 	case "", "n", "no":
 		return nil
 	default:
