@@ -12,6 +12,7 @@ needing a separate client application.
 - Broadcast messages to everyone in the current room
 - Basic SSH terminal and PTY support
 - `/disconnect` and `/quit` commands for leaving a room or session
+- `/invite` and `/kick` for private-room moderation
 - A 20-character message length limit
 - Per-user message rate limiting with escalating cooldowns
 - Per-user room-join limiting with temporary bans
@@ -61,10 +62,34 @@ Available after connecting:
 | `/listrooms` | List active rooms and their user counts. |
 | `/join <room>` | Join an existing room or confirm creation of a new room. |
 | `/disconnect` | Leave the current room without closing the SSH session. |
+| `/invite <username>` | Invite a connected user to the current private room (owner only). |
+| `/kick <username>` | Disconnect a user from the current private room (owner only). |
 | `/quit` | Close the chat session. |
 
 The displayed username combines the SSH username with the last four
 characters of the public-key fingerprint.
+
+## Private rooms
+
+When creating a room, answer `y` when asked whether it should be private.
+Private rooms can only be joined by the owner and users invited with:
+
+```text
+/invite <username>
+```
+
+The private-room owner can remove a connected member with:
+
+```text
+/kick <username>
+```
+
+Ownership is tied to the owner's SSH public-key fingerprint, not their
+displayed username. This allows the owner to reconnect and retain ownership.
+
+If the owner disconnects, the private room remains available to its other
+connected users. Any user who disconnects is removed from the room. The room
+is automatically deleted once it becomes empty.
 
 ## Stopping the server
 
@@ -111,6 +136,10 @@ internal/hostkey/          Ed25519 host-key generation and loading
 Rooms and messages are held in memory and are not persisted between server
 restarts. The server's Ed25519 host key is stored in
 `cmd/nite-chat/.ssh/host_ed25519` and reused between restarts.
+
+When any user, including the owner of a private room, disconnects, they are
+removed from their current room. Private rooms remain available while they
+still have connected users and are removed when empty.
 
 ## Development
 
