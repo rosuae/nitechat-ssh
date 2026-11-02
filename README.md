@@ -125,3 +125,37 @@ Build the application:
 ```bash
 go build ./...
 ```
+
+## Local Docker testing
+
+Build the image:
+
+```bash
+docker build -t nite-chat .
+```
+
+Create a named volume so the server's SSH host key survives container
+restarts:
+
+```bash
+docker volume create nite-chat-hostkey
+```
+
+Start the container:
+
+```bash
+docker run --rm \
+  --name nite-chat \
+  -p 2222:2222 \
+  -v nite-chat-hostkey:/app/.ssh \
+  nite-chat
+```
+
+Connect from another terminal:
+
+```bash
+ssh -p 2222 localhost
+```
+
+Stop the server with `Ctrl+C`. The named volume preserves the generated host
+key for the next run.

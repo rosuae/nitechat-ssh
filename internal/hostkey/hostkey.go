@@ -17,6 +17,10 @@ const (
 )
 
 func DefaultPath() (string, error) {
+	if configuredPath := os.Getenv("HOST_KEY_PATH"); configuredPath != "" {
+		return configuredPath, nil
+	}
+
 	_, sourcePath, _, ok := runtime.Caller(0)
 	if !ok {
 		return "", fmt.Errorf("find hostkey package path")

@@ -1,0 +1,6 @@
+.git
+.idea
+.server.*
+*.swp
+README.md
+cmd/nite-chat/.ssh
