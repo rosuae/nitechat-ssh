@@ -1,0 +1,12 @@
+services:
+  nite-chat:
+    build: .
+    container_name: nite-chat-local
+    ports:
+      - "2222:2222"
+    volumes:
+      - nite-chat-hostkey:/app/.ssh
+    restart: unless-stopped
+
+volumes:
+  nite-chat-hostkey:
