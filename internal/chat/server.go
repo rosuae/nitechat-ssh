@@ -19,6 +19,8 @@ type Server struct {
 	allowlistOnly  bool
 	keysMu         sync.RWMutex
 	authorizedKeys map[string]struct{}
+	usersMu        sync.RWMutex
+	onlineUsers    map[string]*message.User
 	mu             sync.Mutex
 	listener       net.Listener
 }
@@ -26,10 +28,11 @@ type Server struct {
 func NewServer(address string, signer ssh.Signer, allowlistOnly bool) *Server {
 	s := &Server{
 		address:        address,
-		hubMan:         NewHubManager(),
 		allowlistOnly:  allowlistOnly,
 		authorizedKeys: make(map[string]struct{}),
+		onlineUsers:    make(map[string]*message.User),
 	}
+	s.hubMan = NewHubManager(s)
 	s.config = &ssh.ServerConfig{
 		MaxAuthTries: 3,
 		PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
@@ -37,6 +40,7 @@ func NewServer(address string, signer ssh.Signer, allowlistOnly bool) *Server {
 			if s.allowlistOnly && !s.isAuthorizedKey(fp) {
 				return nil, fmt.Errorf("%s is not authorized", fp)
 			}
+			s.addAuthorizedKey(fp)
 			return &ssh.Permissions{
 				Extensions: map[string]string{"fingerprint": fp},
 			}, nil
@@ -51,6 +55,12 @@ func (s *Server) isAuthorizedKey(key string) bool {
 	defer s.keysMu.RUnlock()
 	_, ok := s.authorizedKeys[key]
 	return ok
+}
+
+func (s *Server) addAuthorizedKey(key string) {
+	s.keysMu.Lock()
+	defer s.keysMu.Unlock()
+	s.authorizedKeys[key] = struct{}{}
 }
 
 func (s *Server) Shutdown() error {
@@ -93,6 +103,26 @@ func (s *Server) ListenAndServe() error {
 			return fmt.Errorf("accept connection: %w", err)
 		}
 		go s.handleConnection(conn)
+	}
+}
+
+func (s *Server) findOnlineUser(username string) *message.User {
+	s.usersMu.RLock()
+	defer s.usersMu.RUnlock()
+	return s.onlineUsers[username]
+}
+
+func (s *Server) registerOnlineUser(user *message.User) {
+	s.usersMu.Lock()
+	defer s.usersMu.Unlock()
+	s.onlineUsers[user.Username()] = user
+}
+
+func (s *Server) unregisterOnlineUser(user *message.User) {
+	s.usersMu.Lock()
+	defer s.usersMu.Unlock()
+	if s.onlineUsers[user.Username()] == user {
+		delete(s.onlineUsers, user.Username())
 	}
 }
 
@@ -140,6 +170,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 		user := message.NewUser(s.hubMan, fp, sshConn.User(), channel)
-		go user.HandleSession(requests)
+		s.registerOnlineUser(user)
+		go func() {
+			defer s.unregisterOnlineUser(user)
+			user.HandleSession(requests)
+		}()
 	}
 }

@@ -16,31 +16,56 @@ type registerRequest struct {
 	result chan<- bool
 }
 
-// to do: user hub ownership / allowed users, hub invite
+type inviteRequest struct {
+	inviter *message.User
+	target  *message.User
+	result  chan<- bool
+}
+
+type kickRequest struct {
+	owner  *message.User
+	target *message.User
+	result chan<- bool
+}
+
 type Hub struct {
 	hubName    string
 	users      map[*message.User]bool
 	broadcast  chan *message.Message
 	register   chan registerRequest
+	invite     chan inviteRequest
+	kick       chan kickRequest
 	unregister chan *message.User
 	done       chan struct{}
 	onEmpty    func(*Hub)
 	userCount  atomic.Int64
 
+	isPrivate        bool
+	allowedUsers     map[string]struct{}
+	ownerFingerprint string
+
 	shutdownOnce sync.Once
 }
 
-func NewHub(name string, onEmpty ...func(*Hub)) *Hub {
+func NewHub(name string, options message.HubOptions, onEmpty ...func(*Hub)) *Hub {
 	hub := &Hub{
 		hubName:    name,
 		users:      make(map[*message.User]bool),
 		broadcast:  make(chan *message.Message),
 		register:   make(chan registerRequest),
+		invite:     make(chan inviteRequest),
+		kick:       make(chan kickRequest),
 		unregister: make(chan *message.User),
 		done:       make(chan struct{}),
 	}
 	if len(onEmpty) > 0 {
 		hub.onEmpty = onEmpty[0]
+	}
+	if options.Private {
+		hub.isPrivate = true
+		hub.allowedUsers = make(map[string]struct{})
+		hub.ownerFingerprint = options.OwnerFingerprint
+		hub.allowedUsers[options.OwnerFingerprint] = struct{}{}
 	}
 	return hub
 }
@@ -53,19 +78,57 @@ func (h *Hub) Run() {
 		case request := <-h.register:
 			alreadyConnected := false
 			for existingUser := range h.users {
-				if existingUser.Username() == request.user.Username() {
+				if existingUser.Fingerprint() == request.user.Fingerprint() {
 					alreadyConnected = true
 					break
 				}
 			}
 
-			if !alreadyConnected && len(h.users) < maxUsers {
+			allowed := !h.isPrivate
+			if h.isPrivate {
+				_, allowed = h.allowedUsers[request.user.Fingerprint()]
+			}
+			if !alreadyConnected && allowed && len(h.users) < maxUsers {
 				h.users[request.user] = true
 				h.userCount.Add(1)
 				request.result <- true
 			} else {
 				request.result <- false
 			}
+		case request := <-h.invite:
+			accepted := h.isPrivate &&
+				request.inviter.Fingerprint() == h.ownerFingerprint &&
+				h.users[request.inviter] &&
+				request.target.Fingerprint() != h.ownerFingerprint &&
+				len(h.allowedUsers) < maxUsers
+			if accepted {
+				accepted = request.target.Send(message.NewSystemMessage(
+					request.inviter.Username() + " invited you to join " + h.hubName + ".",
+				))
+				if accepted {
+					h.allowedUsers[request.target.Fingerprint()] = struct{}{}
+				}
+			}
+			request.result <- accepted
+		case request := <-h.kick:
+			accepted := h.isPrivate &&
+				request.owner.Fingerprint() == h.ownerFingerprint &&
+				h.users[request.owner] &&
+				h.users[request.target]
+
+			if accepted {
+				delete(h.users, request.target)
+				h.userCount.Add(-1)
+
+				kickMessage := message.NewSystemMessage(request.target.Username() + " was kicked from the hub.")
+				for user := range h.users {
+					user.Send(kickMessage)
+				}
+
+				request.target.CloseConn()
+				h.cleanupIfEmpty()
+			}
+			request.result <- accepted
 		case user := <-h.unregister:
 			if _, ok := h.users[user]; ok {
 				delete(h.users, user)
@@ -124,6 +187,31 @@ func (h *Hub) RegisterUser(user *message.User) bool {
 	fmt.Println("Register user:", user.Username())
 	h.SendMessage(message.NewSystemMessage(user.Username() + " has joined your hub. Say Hi!"))
 	return true
+}
+
+func (h *Hub) InviteUser(inviter *message.User, target *message.User) bool {
+	result := make(chan bool, 1)
+	select {
+	case h.invite <- inviteRequest{inviter: inviter, target: target, result: result}:
+		return <-result
+	case <-h.done:
+		return false
+	}
+}
+
+func (h *Hub) KickUser(owner *message.User, target *message.User) bool {
+	result := make(chan bool, 1)
+
+	select {
+	case h.kick <- kickRequest{
+		owner:  owner,
+		target: target,
+		result: result,
+	}:
+		return <-result
+	case <-h.done:
+		return false
+	}
 }
 
 func (h *Hub) UnregisterUser(user *message.User) {

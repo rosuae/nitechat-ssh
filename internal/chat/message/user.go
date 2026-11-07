@@ -14,28 +14,37 @@ type User struct {
 	hubMan     HubManager
 	currentHub Hub
 
-	tty *Terminal
-	fingerprint string
-	username string
-	receive chan *Message
+	tty                *Terminal
+	fingerprint        string
+	username           string
+	receive            chan *Message
 	messageRateLimiter messageRateLimiter
-	joinRateLimiter joinRateLimiter
+	joinRateLimiter    joinRateLimiter
 
 	closeOnce sync.Once
 	connOnce  sync.Once
 	mu        sync.Mutex
+	receiveMu sync.RWMutex
 }
 
 type HubManager interface {
-	GetOrCreate(string) Hub
+	GetOrCreate(string, HubOptions) Hub
 	ListRooms() []HubInfo
 	GetRoomInfo(string) (HubInfo, bool)
+	FindUser(string) *User
+}
+
+type HubOptions struct {
+	Private          bool
+	OwnerFingerprint string
 }
 
 type Hub interface {
 	RegisterUser(*User) bool
 	UnregisterUser(*User)
 	SendMessage(*Message)
+	InviteUser(*User, *User) bool
+	KickUser(*User, *User) bool
 	HubDetails() (string, int)
 }
 
@@ -57,6 +66,10 @@ func NewUser(hMan HubManager, fp string, username string, channel ssh.Channel) *
 	return u
 }
 
+func (u *User) Fingerprint() string {
+	return u.fingerprint
+}
+
 func (u *User) listen() {
 	for msg := range u.receive {
 		if msg == nil {
@@ -70,6 +83,8 @@ func (u *User) listen() {
 }
 
 func (u *User) Send(msg *Message) bool {
+	u.receiveMu.RLock()
+	defer u.receiveMu.RUnlock()
 	select {
 	case u.receive <- msg:
 		return true
@@ -150,19 +165,25 @@ func (u *User) HandleSession(requests <-chan *ssh.Request) {
 	go u.tty.HandleRequests(requests)
 	go u.listen()
 
-	_ = u.tty.WriteLine("Welcome to nite-chat!\r\nCommands: /listrooms, /join <room>, /disconnect, /quit")
+	_ = u.tty.WriteLine(
+		"Welcome to nite-chat!\r\n" +
+			"Commands: /listrooms, /join <room>, /invite <username>, " +
+			"/kick <username>, /disconnect, /quit",
+	)
 	u.inputLoop()
 }
 
 func (u *User) Close() {
 	u.closeOnce.Do(func() {
 		u.leaveHub(false)
+		u.receiveMu.Lock()
 		close(u.receive)
+		u.receiveMu.Unlock()
 		_ = u.tty.Close()
 	})
 }
 
-func (u *User) JoinHub(room string) error {
+func (u *User) JoinHub(room string, options HubOptions) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
@@ -173,7 +194,7 @@ func (u *User) JoinHub(room string) error {
 		}
 	}
 
-	newHub := u.hubMan.GetOrCreate(room)
+	newHub := u.hubMan.GetOrCreate(room, options)
 	if success := newHub.RegisterUser(u); !success {
 		u.tty.WriteLine("Cannot join, hub is full or you're already connected.")
 		return nil
