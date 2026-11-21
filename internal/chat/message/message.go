@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-var messageMaxLength = 20
+const messageMaxLength = 500
 
 type Message struct {
 	sender    string
