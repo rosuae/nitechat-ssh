@@ -18,6 +18,7 @@ type User struct {
 	fingerprint        string
 	username           string
 	receive            chan *Message
+	closed             bool
 	messageRateLimiter messageRateLimiter
 	joinRateLimiter    joinRateLimiter
 
@@ -85,6 +86,11 @@ func (u *User) listen() {
 func (u *User) Send(msg *Message) bool {
 	u.receiveMu.RLock()
 	defer u.receiveMu.RUnlock()
+
+	if u.closed {
+		return false
+	}
+
 	select {
 	case u.receive <- msg:
 		return true
@@ -177,6 +183,7 @@ func (u *User) Close() {
 	u.closeOnce.Do(func() {
 		u.leaveHub(false)
 		u.receiveMu.Lock()
+		u.closed = true
 		close(u.receive)
 		u.receiveMu.Unlock()
 		_ = u.tty.Close()
