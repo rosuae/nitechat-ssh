@@ -119,7 +119,7 @@ func (u *User) inputLoop() {
 			return
 		}
 
-		line := strings.TrimSpace(raw)
+		line := strings.TrimSpace(SanitizeBody(raw))
 		if line == "" {
 			continue
 		}

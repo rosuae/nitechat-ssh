@@ -169,11 +169,34 @@ func (s *Server) handleConnection(conn net.Conn) {
 			return
 		}
 
-		user := message.NewUser(s.hubMan, fp, sshConn.User(), channel)
+		username, err := message.ValidateUsername(sshConn.User())
+		if err != nil {
+			fmt.Println("Rejected session:", err)
+			rejectSession(channel, requests, fmt.Sprintf(
+				"Invalid username %q.\r\n%s\r\nConnect with: ssh <name>@<host> -p <port>\r\n",
+				sshConn.User(), message.UsernameRules,
+			))
+			continue
+		}
+
+		user := message.NewUser(s.hubMan, fp, username, channel)
 		s.registerOnlineUser(user)
 		go func() {
 			defer s.unregisterOnlineUser(user)
 			user.HandleSession(requests)
 		}()
 	}
+}
+
+func rejectSession(channel ssh.Channel, requests <-chan *ssh.Request, reason string) {
+	go func() {
+		for req := range requests {
+			if req.WantReply {
+				_ = req.Reply(true, nil)
+			}
+		}
+	}()
+	_, _ = channel.Stderr().Write([]byte(reason))
+	_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
+	_ = channel.Close()
 }
