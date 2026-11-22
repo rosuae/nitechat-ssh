@@ -16,6 +16,7 @@ needing a separate client application.
 - A 20-character message length limit
 - Per-user message rate limiting with escalating cooldowns
 - Per-user room-join limiting with temporary bans
+- Username/room-name validation and message sanitization against terminal injection
 
 ## Requirements
 
@@ -34,8 +35,12 @@ The server listens on TCP port `2222` by default. Connect from another
 terminal:
 
 ```bash
-ssh -p 2222 localhost
+ssh -p 2222 yourname@localhost
 ```
+
+Pick a name explicitly: by default `ssh` sends your local account name, which
+is rejected if it contains spaces or other disallowed characters (see
+[Names and input sanitization](#names-and-input-sanitization)).
 
 The server generates `cmd/nite-chat/.ssh/host_ed25519` on first start and
 reuses it on subsequent starts. Type `/listrooms` to see active rooms, then
@@ -90,6 +95,30 @@ displayed username. This allows the owner to reconnect and retain ownership.
 If the owner disconnects, the private room remains available to its other
 connected users. Any user who disconnects is removed from the room. The room
 is automatically deleted once it becomes empty.
+
+## Names and input sanitization
+
+Everything one user sends ends up on other users' terminals, so input is
+checked before it is shown to anyone. Otherwise a crafted name or message
+could inject ANSI escape sequences (clear screens, recolour text, fake system
+messages) or use invisible Unicode to spoof what others see.
+
+- **Usernames** (the SSH login name) are lowercased and must match
+  `^[a-z0-9][a-z0-9_.-]{0,23}$`. `system`, `server`, `admin` and `root` are
+  reserved. Names are ASCII-only, so look-alike letters (e.g. Cyrillic `а`)
+  can't be used to impersonate someone. An invalid name gets a message
+  explaining the rules, then the session is closed.
+- **Room names** follow the same rules (up to 32 characters) and are
+  lowercased, so `General` and `general` are the same room.
+- **Message bodies** keep normal Unicode text and emoji. Control characters
+  (ESC, the single-byte CSI `U+009B`, DEL, …) and invisible formatting
+  characters (bidi overrides like `U+202E`, zero-width spaces) are stripped.
+  Messages are sanitized before the empty and length checks.
+- **System messages** are shown with a `*** ` prefix, which no username can
+  produce, so users can't fake server announcements.
+
+The rules live in `internal/chat/message/validate.go`, with tests in
+`validate_test.go`.
 
 ## Stopping the server
 

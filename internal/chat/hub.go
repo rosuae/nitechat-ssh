@@ -118,6 +118,7 @@ func (h *Hub) Run() {
 
 			if accepted {
 				delete(h.users, request.target)
+				delete(h.allowedUsers, request.target.Fingerprint())
 				h.userCount.Add(-1)
 
 				kickMessage := message.NewSystemMessage(request.target.Username() + " was kicked from the hub.")

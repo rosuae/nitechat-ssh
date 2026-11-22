@@ -98,9 +98,14 @@ func (u *User) kick(username string) {
     _ = u.tty.WriteLine("Kicked " + target.Username() + ".")
 }
 
-func (u *User) handleJoin(hub string) error {
+func (u *User) handleJoin(rawName string) error {
 	if allowed, retryAfter := u.joinRateLimiter.Allow(time.Now()); !allowed {
 		return u.tty.WriteLine("Too many room join attempts. Try again in " + formatRetryAfter(retryAfter) + ".")
+	}
+
+	hub, err := ValidateRoomName(rawName)
+	if err != nil {
+		return u.tty.WriteLine(SanitizeBody(err.Error()))
 	}
 
 	if _, ok := u.hubMan.GetRoomInfo(hub); ok {
