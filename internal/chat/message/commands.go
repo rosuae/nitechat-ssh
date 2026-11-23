@@ -120,6 +120,9 @@ func (u *User) handleJoin(rawName string) error {
 	switch strings.ToLower(strings.TrimSpace(answer)) {
 	case "y", "yes":
 		answer, err = u.interogate("Make it private? [y/N]")
+		if err != nil {
+			return err
+		}
 		switch strings.ToLower(strings.TrimSpace(answer)) {
 		case "y", "yes":
 			return u.JoinHub(hub, HubOptions{

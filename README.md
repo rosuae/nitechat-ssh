@@ -53,7 +53,7 @@ join or create one:
 
 Once connected to a room, type a message and press Enter. Messages longer
 than 20 characters are rejected. Messages are limited to five messages in
-five seconds per user. Exceeding that limit starts a one-second cooldown;
+five seconds per user. Exceeding that limit starts a five-second cooldown;
 repeated violations double the cooldown up to 30 seconds. Ten room-join
 attempts within one minute result in a 30-second temporary ban from joining
 rooms.
