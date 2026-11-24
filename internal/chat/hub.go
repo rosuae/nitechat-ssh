@@ -16,6 +16,11 @@ type registerRequest struct {
 	result chan<- bool
 }
 
+type unregisterRequest struct {
+	user   *message.User
+	result chan<- bool
+}
+
 type inviteRequest struct {
 	inviter *message.User
 	target  *message.User
@@ -35,7 +40,7 @@ type Hub struct {
 	register   chan registerRequest
 	invite     chan inviteRequest
 	kick       chan kickRequest
-	unregister chan *message.User
+	unregister chan unregisterRequest
 	done       chan struct{}
 	onEmpty    func(*Hub)
 	userCount  atomic.Int64
@@ -55,7 +60,7 @@ func NewHub(name string, options message.HubOptions, onEmpty ...func(*Hub)) *Hub
 		register:   make(chan registerRequest),
 		invite:     make(chan inviteRequest),
 		kick:       make(chan kickRequest),
-		unregister: make(chan *message.User),
+		unregister: make(chan unregisterRequest),
 		done:       make(chan struct{}),
 	}
 	if len(onEmpty) > 0 {
@@ -130,11 +135,14 @@ func (h *Hub) Run() {
 				h.cleanupIfEmpty()
 			}
 			request.result <- accepted
-		case user := <-h.unregister:
-			if _, ok := h.users[user]; ok {
-				delete(h.users, user)
+		case request := <-h.unregister:
+			if _, ok := h.users[request.user]; ok {
+				delete(h.users, request.user)
 				h.userCount.Add(-1)
 				h.cleanupIfEmpty()
+				request.result <- true
+			} else {
+				request.result <- false
 			}
 		case msg := <-h.broadcast:
 			var failed []*message.User
@@ -216,11 +224,22 @@ func (h *Hub) KickUser(owner *message.User, target *message.User) bool {
 }
 
 func (h *Hub) UnregisterUser(user *message.User) {
+	result := make(chan bool, 1)
+
 	select {
-	case h.unregister <- user:
+	case h.unregister <- unregisterRequest{
+		user:   user,
+		result: result,
+	}:
 	case <-h.done:
 		return
 	}
+
+	removed := <-result
+	if !removed {
+		return
+	}
+
 	fmt.Println("Unregister user:", user.Username())
 	h.SendMessage(message.NewSystemMessage(user.Username() + " has left your hub."))
 }

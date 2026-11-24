@@ -21,11 +21,11 @@ type windowChange struct {
 }
 
 type Terminal struct {
-	ch    ssh.Channel
+	ch     ssh.Channel
 	prompt string
-	ui    *term.Terminal
-	width atomic.Int32
-	wmu   sync.Mutex // serializes every write to the screen
+	ui     *term.Terminal
+	width  atomic.Int32
+	wmu    sync.Mutex // serializes every write to the screen
 }
 
 func (t *Terminal) buildPrompt(text string) {

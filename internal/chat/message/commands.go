@@ -71,31 +71,31 @@ func (u *User) invite(username string) {
 }
 
 func (u *User) kick(username string) {
-    hub := u.currentHubSafe()
-    if hub == nil {
-        _ = u.tty.WriteLine("You are not connected to any room. Use /join <room>.")
-        return
-    }
+	hub := u.currentHubSafe()
+	if hub == nil {
+		_ = u.tty.WriteLine("You are not connected to any room. Use /join <room>.")
+		return
+	}
 
-    target := u.hubMan.FindUser(username)
-    if target == nil {
-        _ = u.tty.WriteLine("User not found: " + username)
-        return
-    }
+	target := u.hubMan.FindUser(username)
+	if target == nil {
+		_ = u.tty.WriteLine("User not found: " + username)
+		return
+	}
 
-    if target == u {
-        _ = u.tty.WriteLine("You cannot kick yourself.")
-        return
-    }
+	if target == u {
+		_ = u.tty.WriteLine("You cannot kick yourself.")
+		return
+	}
 
-    if !hub.KickUser(u, target) {
-        _ = u.tty.WriteLine(
-            "Kick failed. Only the private room owner can kick users in the current room.",
-        )
-        return
-    }
+	if !hub.KickUser(u, target) {
+		_ = u.tty.WriteLine(
+			"Kick failed. Only the private room owner can kick users in the current room.",
+		)
+		return
+	}
 
-    _ = u.tty.WriteLine("Kicked " + target.Username() + ".")
+	_ = u.tty.WriteLine("Kicked " + target.Username() + ".")
 }
 
 func (u *User) handleJoin(rawName string) error {
